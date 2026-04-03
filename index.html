@@ -1,1 +1,236 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Minimax Alpha-Beta Visualizer</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 0; background: #0f172a; color: #e2e8f0; }
+    .wrap { display: grid; grid-template-columns: 360px 1fr; min-height: 100vh; }
+    .panel { padding: 16px; background: #111827; border-right: 1px solid #334155; }
+    h1 { font-size: 20px; margin: 0 0 10px; }
+    p { color: #94a3b8; font-size: 13px; }
+    textarea { width: 100%; min-height: 190px; resize: vertical; background: #020617; color: #e2e8f0; border: 1px solid #334155; border-radius: 8px; padding: 10px; font-family: monospace; }
+    .row { margin-top: 10px; display: flex; gap: 8px; }
+    button { border: 0; border-radius: 8px; padding: 9px 11px; font-weight: 600; cursor: pointer; }
+    #exampleBtn { background: #334155; color: #f8fafc; }
+    #runBtn { background: #22c55e; color: #052e16; flex: 1; }
+    .status { margin-top: 12px; font-size: 13px; background: #0b1220; border: 1px solid #334155; border-radius: 8px; padding: 10px; }
+    .legend { margin-top: 8px; font-size: 12px; color: #cbd5e1; }
+    .dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 4px; }
+    .canvas { overflow: auto; }
+    svg { width: 100%; height: 100%; min-height: 900px; background: radial-gradient(circle at top, #172554, #020617); }
+    .label { fill: #e2e8f0; font-size: 12px; text-anchor: middle; dominant-baseline: middle; }
+    .edge { stroke: #64748b; stroke-width: 1.5; }
+    .edge.pruned { stroke: #ef4444; stroke-width: 2; stroke-dasharray: 6 5; }
+    .node circle { stroke: #e2e8f0; stroke-width: 1; }
+    .min circle { fill: #1d4ed8; }
+    .max circle { fill: #16a34a; }
+    .leaf circle { fill: #7c3aed; }
+    .pruned circle { fill: #ef4444; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <aside class="panel">
+      <h1>Minimax + Alpha-Beta Visualizer</h1>
+      <p>Paste user-provided input JSON, then run alpha-beta pruning.</p>
+      <textarea id="input"></textarea>
+      <div class="row">
+        <button id="exampleBtn">Load Example #5</button>
+        <button id="runBtn">Run</button>
+      </div>
+      <div class="status" id="status">Ready.</div>
+      <div class="legend">
+        <span><span class="dot" style="background:#16a34a"></span>Max</span>
+        <span><span class="dot" style="background:#1d4ed8"></span>Min</span>
+        <span><span class="dot" style="background:#7c3aed"></span>Leaf</span>
+        <span><span class="dot" style="background:#ef4444"></span>Pruned</span>
+      </div>
+    </aside>
+    <main class="canvas">
+      <svg id="tree"></svg>
+    </main>
+  </div>
 
+  <script>
+    const example5 = {
+      depth: 3,
+      branching: 2,
+      leafValues: [3, 5, 6, 9, 1, 2, 0, -1]
+    };
+
+    const inputEl = document.getElementById('input');
+    const statusEl = document.getElementById('status');
+    const svg = document.getElementById('tree');
+
+    inputEl.value = JSON.stringify(example5, null, 2);
+
+    document.getElementById('exampleBtn').onclick = () => {
+      inputEl.value = JSON.stringify(example5, null, 2);
+      statusEl.textContent = 'Loaded Example #5. Click Run to visualize pruning.';
+    };
+
+    document.getElementById('runBtn').onclick = run;
+
+    function buildTree(depth, branching, leafValues) {
+      let leafIndex = 0;
+      let id = 0;
+      function make(level) {
+        const node = { id: id++, level, children: [], value: null, pruned: false, visited: false };
+        if (level === depth) {
+          node.value = leafValues[leafIndex++];
+          return node;
+        }
+        for (let i = 0; i < branching; i++) node.children.push(make(level + 1));
+        return node;
+      }
+      return make(0);
+    }
+
+    function alphaBeta(node, alpha, beta, maximizing, stats) {
+      node.visited = true;
+      if (!node.children.length) {
+        stats.visitedLeaves++;
+        return node.value;
+      }
+
+      if (maximizing) {
+        let best = -Infinity;
+        for (let i = 0; i < node.children.length; i++) {
+          const child = node.children[i];
+          const score = alphaBeta(child, alpha, beta, false, stats);
+          best = Math.max(best, score);
+          alpha = Math.max(alpha, best);
+          if (beta <= alpha) {
+            for (let j = i + 1; j < node.children.length; j++) markPruned(node.children[j], stats);
+            break;
+          }
+        }
+        node.value = best;
+        return best;
+      } else {
+        let best = Infinity;
+        for (let i = 0; i < node.children.length; i++) {
+          const child = node.children[i];
+          const score = alphaBeta(child, alpha, beta, true, stats);
+          best = Math.min(best, score);
+          beta = Math.min(beta, best);
+          if (beta <= alpha) {
+            for (let j = i + 1; j < node.children.length; j++) markPruned(node.children[j], stats);
+            break;
+          }
+        }
+        node.value = best;
+        return best;
+      }
+    }
+
+    function markPruned(node, stats) {
+      node.pruned = true;
+      if (!node.children.length) {
+        stats.prunedLeaves++;
+      } else {
+        node.children.forEach(c => markPruned(c, stats));
+      }
+    }
+
+    function collectLeaves(node, out = []) {
+      if (!node.children.length) out.push(node);
+      node.children.forEach(c => collectLeaves(c, out));
+      return out;
+    }
+
+    function layout(root) {
+      const leaves = collectLeaves(root);
+      const leafGap = 110;
+      leaves.forEach((leaf, i) => {
+        leaf.x = 70 + i * leafGap;
+        leaf.y = 90 + leaf.level * 110;
+      });
+
+      function setInternal(node) {
+        if (!node.children.length) return;
+        node.children.forEach(setInternal);
+        node.x = (node.children[0].x + node.children[node.children.length - 1].x) / 2;
+        node.y = 90 + node.level * 110;
+      }
+      setInternal(root);
+      return { width: Math.max(900, leaves.length * leafGap + 120), height: 130 + (root.level + 4) * 110 };
+    }
+
+    function draw(root, width, height) {
+      svg.innerHTML = '';
+      svg.setAttribute('viewBox', `0 0 ${width} ${height}`);
+
+      function drawEdges(node) {
+        node.children.forEach(child => {
+          const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+          line.setAttribute('x1', node.x);
+          line.setAttribute('y1', node.y);
+          line.setAttribute('x2', child.x);
+          line.setAttribute('y2', child.y);
+          line.setAttribute('class', `edge ${child.pruned ? 'pruned' : ''}`);
+          svg.appendChild(line);
+          drawEdges(child);
+        });
+      }
+
+      function drawNodes(node) {
+        const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+        const kind = node.children.length ? (node.level % 2 === 0 ? 'max' : 'min') : 'leaf';
+        g.setAttribute('class', `node ${kind} ${node.pruned ? 'pruned' : ''}`);
+
+        const c = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+        c.setAttribute('cx', node.x);
+        c.setAttribute('cy', node.y);
+        c.setAttribute('r', 22);
+        g.appendChild(c);
+
+        const t = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+        t.setAttribute('x', node.x);
+        t.setAttribute('y', node.y);
+        t.setAttribute('class', 'label');
+        t.textContent = node.value;
+        g.appendChild(t);
+
+        svg.appendChild(g);
+        node.children.forEach(drawNodes);
+      }
+
+      drawEdges(root);
+      drawNodes(root);
+    }
+
+    function run() {
+      try {
+        const parsed = JSON.parse(inputEl.value);
+        const depth = Number(parsed.depth);
+        const branching = Number(parsed.branching);
+        const leafValues = parsed.leafValues;
+
+        if (!Number.isInteger(depth) || depth < 1) throw new Error('depth must be an integer >= 1');
+        if (!Number.isInteger(branching) || branching < 2) throw new Error('branching must be an integer >= 2');
+        if (!Array.isArray(leafValues)) throw new Error('leafValues must be an array of numbers');
+
+        const expectedLeaves = branching ** depth;
+        if (leafValues.length !== expectedLeaves) {
+          throw new Error(`leafValues length must be ${expectedLeaves} for depth=${depth}, branching=${branching}`);
+        }
+
+        const tree = buildTree(depth, branching, leafValues.map(Number));
+        const stats = { visitedLeaves: 0, prunedLeaves: 0 };
+        const best = alphaBeta(tree, -Infinity, Infinity, true, stats);
+        const dims = layout(tree);
+        draw(tree, dims.width, dims.height);
+
+        statusEl.textContent = `Done. Best root value: ${best}. Visited leaves: ${stats.visitedLeaves}. Pruned leaves: ${stats.prunedLeaves}.`;
+      } catch (err) {
+        statusEl.textContent = `Input error: ${err.message}`;
+      }
+    }
+
+    run();
+  </script>
+</body>
+</html>
